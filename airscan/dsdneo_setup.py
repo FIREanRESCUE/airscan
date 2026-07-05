@@ -8,11 +8,28 @@ from pathlib import Path
 
 import requests
 
+DSD_NEO_REPO = "arancormonk/dsd-neo"
 DSD_NEO_VERSION = "v2.3.0"
+DSD_NEO_WINDOWS_ASSET = f"dsd-neo-msvc-x86_64-native-{DSD_NEO_VERSION}.zip"
 DSD_NEO_URL = (
-    "https://github.com/arancormonk/dsd-neo/releases/download/"
-    f"{DSD_NEO_VERSION}/dsd-neo-msvc-x86_64-native-{DSD_NEO_VERSION.lstrip('v')}.zip"
+    f"https://github.com/{DSD_NEO_REPO}/releases/download/"
+    f"{DSD_NEO_VERSION}/{DSD_NEO_WINDOWS_ASSET}"
 )
+
+
+def resolve_download_url() -> str:
+    """Return the Windows MSVC ZIP URL, verifying via GitHub API when possible."""
+    api_url = f"https://api.github.com/repos/{DSD_NEO_REPO}/releases/tags/{DSD_NEO_VERSION}"
+    try:
+        response = requests.get(api_url, timeout=30)
+        if response.ok:
+            for asset in response.json().get("assets", []):
+                name = asset.get("name", "")
+                if name == DSD_NEO_WINDOWS_ASSET:
+                    return asset["browser_download_url"]
+    except requests.RequestException:
+        pass
+    return DSD_NEO_URL
 
 
 def find_dsdneo(explicit_path: str, install_dir: Path) -> Path | None:
@@ -32,7 +49,8 @@ def download_dsdneo(install_dir: Path, progress_callback=None) -> Path:
     install_dir.mkdir(parents=True, exist_ok=True)
     zip_path = install_dir / "dsd-neo.zip"
 
-    with requests.get(DSD_NEO_URL, stream=True, timeout=120) as response:
+    download_url = resolve_download_url()
+    with requests.get(download_url, stream=True, timeout=120) as response:
         response.raise_for_status()
         total = int(response.headers.get("content-length", 0))
         downloaded = 0
