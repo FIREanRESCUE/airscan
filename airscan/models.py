@@ -21,6 +21,11 @@ class SystemType(str, Enum):
     CONVENTIONAL = "conventional"
 
 
+class InputSource(str, Enum):
+    RTL_SDR = "rtl_sdr"
+    LINE_IN = "line_in"
+
+
 @dataclass
 class ChannelEntry:
     channel_number: int
@@ -52,10 +57,14 @@ class ScannerSystem:
     control_frequency_hz: int = 0
     channels: list[ChannelEntry] = field(default_factory=list)
     talkgroups: list[Talkgroup] = field(default_factory=list)
+    input_source: InputSource = InputSource.RTL_SDR
     rtl_device: int = 0
     gain: int = 0
     ppm: int = 0
     bandwidth: int = 12
+    audio_device: str = ""
+    input_volume: int = 1
+    rigctl_port: int = 0
     use_trunking: bool = True
     use_whitelist: bool = False
     modulation: str = "auto"
@@ -71,6 +80,7 @@ class ScannerSystem:
         data = asdict(self)
         data["protocol"] = self.protocol.value
         data["system_type"] = self.system_type.value
+        data["input_source"] = self.input_source.value
         return data
 
     @classmethod
@@ -97,10 +107,14 @@ class ScannerSystem:
                 )
                 for t in data.get("talkgroups", [])
             ],
+            input_source=InputSource(data.get("input_source", InputSource.RTL_SDR.value)),
             rtl_device=int(data.get("rtl_device", 0)),
             gain=int(data.get("gain", 0)),
             ppm=int(data.get("ppm", 0)),
             bandwidth=int(data.get("bandwidth", 12)),
+            audio_device=str(data.get("audio_device", "")),
+            input_volume=int(data.get("input_volume", 1)),
+            rigctl_port=int(data.get("rigctl_port", 0)),
             use_trunking=bool(data.get("use_trunking", True)),
             use_whitelist=bool(data.get("use_whitelist", False)),
             modulation=str(data.get("modulation", "auto")),
@@ -115,6 +129,7 @@ class AppSettings:
     auto_record: bool = True
     hang_time: float = 1.0
     block_encrypted: bool = False
+    default_audio_device: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -127,4 +142,5 @@ class AppSettings:
             auto_record=bool(data.get("auto_record", True)),
             hang_time=float(data.get("hang_time", 1.0)),
             block_encrypted=bool(data.get("block_encrypted", False)),
+            default_audio_device=str(data.get("default_audio_device", "")),
         )

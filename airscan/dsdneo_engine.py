@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from airscan.csv_generator import prepare_system_files, write_trunk_scan_targets
-from airscan.models import AppSettings, Protocol, ScannerSystem, SystemType
+from airscan.dsdneo_setup import format_pulse_input
+from airscan.models import AppSettings, InputSource, Protocol, ScannerSystem, SystemType
 
 
 @dataclass
@@ -133,11 +134,13 @@ class DsdNeoEngine:
         if system.use_trunking and system.system_type == SystemType.TRUNKED:
             command.append("-T")
 
-        rtl = (
-            f"rtl:{system.rtl_device}:{system.frequency_mhz()}:"
-            f"{system.gain}:{system.ppm}:{system.bandwidth}"
-        )
-        command.extend(["-i", rtl, f"-t={settings.hang_time:g}"])
+        command.extend(["-i", self._input_arg(system, settings), f"-t={settings.hang_time:g}"])
+
+        if system.input_source == InputSource.LINE_IN and system.input_volume > 1:
+            command.extend(["--input-volume", str(max(1, min(16, system.input_volume)))])
+
+        if system.rigctl_port > 0:
+            command.extend(["-U", str(system.rigctl_port)])
 
         if chan_path:
             command.extend(["-C", str(chan_path)])
@@ -159,6 +162,16 @@ class DsdNeoEngine:
             command.append(mod)
 
         return command
+
+    def _input_arg(self, system: ScannerSystem, settings: AppSettings) -> str:
+        if system.input_source == InputSource.LINE_IN:
+            device = system.audio_device or settings.default_audio_device
+            return format_pulse_input(device)
+
+        return (
+            f"rtl:{system.rtl_device}:{system.frequency_mhz()}:"
+            f"{system.gain}:{system.ppm}:{system.bandwidth}"
+        )
 
     def _mode_flags(self, system: ScannerSystem) -> list[str]:
         mapping = {

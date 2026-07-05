@@ -96,9 +96,9 @@ def verify_dsdneo(exe_path: Path) -> tuple[bool, str]:
     return False, output.strip() or "Unknown decoder response"
 
 
-def list_rtl_devices(exe_path: Path) -> list[str]:
+def _run_dsdneo_list(exe_path: Path) -> str:
     if not exe_path.exists():
-        return []
+        return ""
     try:
         result = subprocess.run(
             [str(exe_path), "-O"],
@@ -108,13 +108,86 @@ def list_rtl_devices(exe_path: Path) -> list[str]:
             creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
         )
     except OSError:
-        return []
+        return ""
+    return (result.stdout or "") + (result.stderr or "")
 
+
+def list_rtl_devices(exe_path: Path) -> list[str]:
     devices: list[str] = []
-    for line in (result.stdout or "").splitlines():
+    for line in _run_dsdneo_list(exe_path).splitlines():
         match = re.search(r"rtl\s*[:=]?\s*(\d+)", line, re.IGNORECASE)
         if match:
             devices.append(f"RTL-SDR #{match.group(1)}")
         elif "rtl" in line.lower() and line.strip():
             devices.append(line.strip())
     return devices or ["RTL-SDR #0 (default)"]
+
+
+def list_audio_devices(exe_path: Path) -> list[tuple[str, str]]:
+    """Return (device_id, label) pairs for line-in / aux input devices."""
+    output = _run_dsdneo_list(exe_path)
+    devices: list[tuple[str, str]] = [("", "Default input device")]
+
+    in_input_section = False
+    for line in output.splitlines():
+        stripped = line.strip()
+        lower = stripped.lower()
+
+        if any(token in lower for token in ("input source", "input device", "capture device", "recording device")):
+            in_input_section = True
+            continue
+        if in_input_section and any(token in lower for token in ("output", "sink", "playback")):
+            in_input_section = False
+
+        indexed = re.match(r"^(\d+)\s*[:.)-]\s*(.+)$", stripped)
+        if indexed and (in_input_section or "input" in lower or "capture" in lower or "microphone" in lower):
+            device_id, label = indexed.group(1), indexed.group(2).strip()
+            devices.append((device_id, label))
+            continue
+
+        pulse = re.match(r"^pulse\s*[:=]\s*(.+)$", stripped, re.IGNORECASE)
+        if pulse:
+            label = pulse.group(1).strip()
+            devices.append((label, label))
+            continue
+
+        if re.search(r"(microphone|line in|stereo mix|aux|baofeng|realtek)", lower):
+            match = re.match(r"^(\d+)\s*[:.)-]\s*(.+)$", stripped)
+            device_id = match.group(1) if match else label_to_id(stripped)
+            label = match.group(2).strip() if match else stripped
+            if (device_id, label) not in devices:
+                devices.append((device_id, label))
+
+    if len(devices) == 1:
+        devices.extend(_fallback_windows_audio_devices())
+
+    return devices
+
+
+def label_to_id(label: str) -> str:
+    return re.sub(r"[^\w.-]+", "_", label.strip()).strip("_") or "device"
+
+
+def _fallback_windows_audio_devices() -> list[tuple[str, str]]:
+    """Best-effort device list when dsd-neo -O does not enumerate inputs."""
+    try:
+        import sounddevice as sd
+
+        devices: list[tuple[str, str]] = []
+        for index, device in enumerate(sd.query_devices()):
+            if device.get("max_input_channels", 0) > 0:
+                name = str(device.get("name", f"Device {index}"))
+                devices.append((str(index), name))
+        return devices
+    except Exception:
+        return [
+            ("", "Default input device"),
+            ("0", "Microphone / Line In"),
+        ]
+
+
+def format_pulse_input(device_id: str) -> str:
+    device_id = device_id.strip()
+    if not device_id:
+        return "pulse"
+    return f"pulse:{device_id}"

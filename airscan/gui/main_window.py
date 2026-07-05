@@ -8,10 +8,10 @@ from tkinter import messagebox
 
 from airscan.config_store import ConfigStore
 from airscan.dsdneo_engine import CallEvent, DsdNeoEngine
-from airscan.dsdneo_setup import find_dsdneo, list_rtl_devices, verify_dsdneo
+from airscan.dsdneo_setup import find_dsdneo, list_audio_devices, list_rtl_devices, verify_dsdneo
 from airscan.gui.setup_dialog import SetupDialog
 from airscan.gui.system_editor import PROTOCOL_LABELS, SystemEditor
-from airscan.models import AppSettings, Protocol, ScannerSystem
+from airscan.models import AppSettings, InputSource, Protocol, ScannerSystem, SystemType
 
 
 class MainWindow(ctk.CTk):
@@ -25,7 +25,7 @@ class MainWindow(ctk.CTk):
         self.engine = DsdNeoEngine()
         self.selected_index: int | None = None
 
-        self.title("AirScan — Multi-Protocol RTL-SDR Scanner")
+        self.title("AirScan — Multi-Protocol Digital Scanner")
         self.geometry("1100x720")
         self.minsize(900, 600)
 
@@ -48,7 +48,7 @@ class MainWindow(ctk.CTk):
 
         ctk.CTkLabel(
             header,
-            text="P25 · DMR · NXDN trunking for RTL-SDR",
+            text="P25 · DMR · NXDN · RTL-SDR or radio aux input",
             text_color="#aaaaaa",
         ).pack(side="left", padx=16)
 
@@ -71,6 +71,7 @@ class MainWindow(ctk.CTk):
         btn_row = ctk.CTkFrame(left, fg_color="transparent")
         btn_row.pack(fill="x", pady=8)
         ctk.CTkButton(btn_row, text="Add", width=70, command=self._add_system).pack(side="left", padx=2)
+        ctk.CTkButton(btn_row, text="Radio Aux", width=90, command=self._add_radio_aux).pack(side="left", padx=2)
         ctk.CTkButton(btn_row, text="Edit", width=70, command=self._edit_system).pack(side="left", padx=2)
         ctk.CTkButton(btn_row, text="Delete", width=70, fg_color="#8B0000", command=self._delete_system).pack(side="left", padx=2)
 
@@ -115,7 +116,19 @@ class MainWindow(ctk.CTk):
         self._update_decoder_label()
         devices = list_rtl_devices(Path(self.settings.dsdneo_path))
         if devices:
-            self._append_log("Detected devices: " + ", ".join(devices))
+            self._append_log("RTL devices: " + ", ".join(devices))
+        audio = self._audio_devices()
+        if len(audio) > 1:
+            self._append_log("Line-in devices: " + ", ".join(label for _, label in audio[1:6]))
+
+    def _decoder_exe(self) -> Path | None:
+        return find_dsdneo(self.settings.dsdneo_path, self.store.dsdneo_dir)
+
+    def _audio_devices(self) -> list[tuple[str, str]]:
+        exe = self._decoder_exe()
+        if exe:
+            return list_audio_devices(exe)
+        return [("", "Default input device")]
 
     def _update_decoder_label(self) -> None:
         exe = find_dsdneo(self.settings.dsdneo_path, self.store.dsdneo_dir)
@@ -136,8 +149,12 @@ class MainWindow(ctk.CTk):
 
         for index, system in enumerate(self.systems):
             label = PROTOCOL_LABELS.get(system.protocol, system.protocol.value)
-            freq = system.control_frequency_hz / 1_000_000
-            text = f"{system.name}\n{label} · {freq:.4f} MHz"
+            if system.input_source == InputSource.LINE_IN:
+                source = "Radio aux / line-in"
+            else:
+                freq = system.control_frequency_hz / 1_000_000
+                source = f"{freq:.4f} MHz"
+            text = f"{system.name}\n{label} · {source}"
             btn = ctk.CTkButton(
                 self.system_list,
                 text=text,
@@ -153,13 +170,30 @@ class MainWindow(ctk.CTk):
         self._refresh_system_list()
 
     def _add_system(self) -> None:
-        SystemEditor(self, on_save=self._on_system_saved)
+        SystemEditor(self, on_save=self._on_system_saved, audio_devices=self._audio_devices())
+
+    def _add_radio_aux(self) -> None:
+        preset = ScannerSystem(
+            name="Radio Aux",
+            protocol=Protocol.AUTO,
+            input_source=InputSource.LINE_IN,
+            system_type=SystemType.CONVENTIONAL,
+            use_trunking=False,
+            input_volume=2,
+            notes="Baofeng/scanner aux cable to PC line-in or mic",
+        )
+        SystemEditor(self, system=preset, on_save=self._on_system_saved, audio_devices=self._audio_devices())
 
     def _edit_system(self) -> None:
         if self.selected_index is None:
             messagebox.showinfo("Select a system", "Choose a system to edit.")
             return
-        SystemEditor(self, system=self.systems[self.selected_index], on_save=self._on_system_saved)
+        SystemEditor(
+            self,
+            system=self.systems[self.selected_index],
+            on_save=self._on_system_saved,
+            audio_devices=self._audio_devices(),
+        )
 
     def _delete_system(self) -> None:
         if self.selected_index is None:
@@ -216,7 +250,10 @@ class MainWindow(ctk.CTk):
 
     def _start_trunk_scan(self) -> None:
         if len(self.systems) < 2:
-            messagebox.showinfo("Trunk scan", "Add at least two systems for single-dongle trunk scan rotation.")
+            messagebox.showinfo("Trunk scan", "Add at least two RTL-SDR systems for single-dongle trunk scan rotation.")
+            return
+        if any(system.input_source == InputSource.LINE_IN for system in self.systems):
+            messagebox.showinfo("Trunk scan", "Trunk scan requires RTL-SDR input. Line-in/radio aux systems are excluded.")
             return
         exe = self._get_decoder()
         if not exe:

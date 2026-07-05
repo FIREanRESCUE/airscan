@@ -53,6 +53,24 @@ On first launch, the setup wizard downloads DSD-neo v2.3.0. You can also point A
 
 Example channel and talkgroup CSV templates are in the `examples/` folder.
 
+### Decode from a radio aux cable (Baofeng, scanner, etc.)
+
+You can decode digital audio from any radio that outputs discriminator or speaker audio to your PC:
+
+1. Connect the radio **speaker or earphone jack** to your PC **line-in or microphone** input using a 3.5 mm aux cable.
+2. Click **Radio Aux** (or Add and choose **Radio aux / line-in** as the input source).
+3. Select your Windows input device (e.g. *Microphone*, *Line In*, or *Stereo Mix*).
+4. Choose the protocol or leave **Auto-detect**.
+5. Tune the radio manually to the digital channel and click **Start Selected System**.
+
+Tips for Baofeng and similar analog-FM radios:
+
+- Use the **earphone output**, not the speaker, for cleaner audio levels.
+- Start with **input boost 2–4** if decoding is weak or absent.
+- Keep volume moderate — clipping distorts digital decoding.
+- **Trunk following does not work** with a manually tuned Baofeng unless you add rigctl support via SDR++ or a programmable radio. For Baofeng use conventional mode and tune by hand.
+- Best results come from a radio/scanner with a **discriminator tap** or dedicated digital audio output; speaker audio works but is less reliable.
+
 ## RTL-SDR tips
 
 - Set **PPM correction** if your dongle drifts (typical values: -2 to +3).
