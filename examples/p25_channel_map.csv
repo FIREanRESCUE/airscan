@@ -1,0 +1,5 @@
+ChannelNumber(dec),frequency(Hz),note
+999,851012500,control channel
+1,851512500,voice
+2,852012500,voice
+3,852512500,voice

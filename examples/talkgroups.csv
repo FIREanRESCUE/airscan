@@ -1,0 +1,5 @@
+DEC,Mode(A=Allow; B=Block; DE=Enc),Name,Tag
+1001,A,Fire Dispatch,Fire
+1002,A,Fire Ops,Fire
+2001,A,Police Dispatch,Law
+2002,B,Encrypted Tac,Law
