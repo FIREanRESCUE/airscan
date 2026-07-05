@@ -78,7 +78,27 @@ Tips for Baofeng and similar analog-FM radios:
 - For marginal signals, consider feeding audio from SDR++ via TCP instead of direct RTL input (see DSD-neo docs).
 - P25 Phase 2 and busy trunked systems benefit from a stronger CPU and good antenna placement.
 
-## Trunk scan mode
+## Multi-dongle monitoring
+
+AirScan can run **one DSD-neo decoder per RTL-SDR dongle** at the same time:
+
+1. Create a system for each trunk/site you want to monitor.
+2. Assign a **unique RTL-SDR device index** to each system (0, 1, 2, …).
+3. Click **Start All (Multi-Dongle)** to launch parallel decoders.
+
+Each dongle keeps its own control channel (or conventional frequency) while voice traffic is followed independently. Live activity is merged in one log with `[System Name]` prefixes. Recordings are saved under `recordings/<system-name>/`.
+
+You can also click **Start Selected System** multiple times to bring systems online one at a time, as long as they use different dongles. Use **Stop Selected** or **Stop All** to shut decoders down.
+
+Typical setup for a wide P25 site:
+
+| Dongle | Role |
+|--------|------|
+| #0 | Control channel (851.x MHz) |
+| #1 | Voice pool / second site |
+| #2 | Additional site or backup CC |
+
+## Trunk scan mode (single dongle)
 
 If you only have **one RTL-SDR** but want to monitor multiple control channels, add several systems and use **Trunk Scan All**. DSD-neo rotates the tuner across configured targets. Traffic on inactive targets may be missed while the tuner is elsewhere.
 

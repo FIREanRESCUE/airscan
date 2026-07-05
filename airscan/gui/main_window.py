@@ -76,8 +76,12 @@ class MainWindow(ctk.CTk):
         ctk.CTkButton(btn_row, text="Delete", width=70, fg_color="#8B0000", command=self._delete_system).pack(side="left", padx=2)
 
         ctk.CTkButton(left, text="Start Selected System", command=self._start_selected).pack(fill="x", pady=4)
+        ctk.CTkButton(left, text="Start All (Multi-Dongle)", command=self._start_all_multi).pack(fill="x", pady=4)
         ctk.CTkButton(left, text="Trunk Scan All (1 dongle)", fg_color="#555555", command=self._start_trunk_scan).pack(fill="x", pady=4)
-        ctk.CTkButton(left, text="Stop", fg_color="#8B0000", command=self._stop).pack(fill="x", pady=4)
+        stop_row = ctk.CTkFrame(left, fg_color="transparent")
+        stop_row.pack(fill="x", pady=4)
+        ctk.CTkButton(stop_row, text="Stop Selected", fg_color="#8B0000", command=self._stop_selected).pack(side="left", fill="x", expand=True, padx=(0, 4))
+        ctk.CTkButton(stop_row, text="Stop All", fg_color="#5a0000", command=self._stop).pack(side="left", fill="x", expand=True)
 
         ctk.CTkLabel(left, text="Settings", font=ctk.CTkFont(size=14, weight="bold")).pack(anchor="w", pady=(16, 4))
         self.record_var = ctk.BooleanVar(value=self.settings.auto_record)
@@ -153,13 +157,15 @@ class MainWindow(ctk.CTk):
                 source = "Radio aux / line-in"
             else:
                 freq = system.control_frequency_hz / 1_000_000
-                source = f"{freq:.4f} MHz"
-            text = f"{system.name}\n{label} · {source}"
+                source = f"Dongle #{system.rtl_device} · {freq:.4f} MHz"
+            active = system.name in self.engine.active_session_names
+            prefix = "▶ " if active else ""
+            text = f"{prefix}{system.name}\n{label} · {source}"
             btn = ctk.CTkButton(
                 self.system_list,
                 text=text,
                 anchor="w",
-                fg_color="#333333" if index != self.selected_index else "#1f538d",
+                fg_color="#1f538d" if index == self.selected_index else ("#2d5a27" if active else "#333333"),
                 hover_color="#444444",
                 command=lambda i=index: self._select_system(i),
             )
@@ -229,6 +235,23 @@ class MainWindow(ctk.CTk):
             return None
         return exe
 
+    def _recordings_dir(self) -> Path:
+        recordings = Path(self.settings.recordings_dir)
+        if not recordings.is_absolute():
+            recordings = self.store.base_dir / recordings
+        recordings.mkdir(parents=True, exist_ok=True)
+        return recordings
+
+    def _update_status(self) -> None:
+        names = [n for n in self.engine.active_session_names if n != "__trunk_scan__"]
+        if not names:
+            self.status_label.configure(text="Idle", text_color="#aaaaaa")
+        elif len(names) == 1:
+            self.status_label.configure(text=f"Monitoring: {names[0]}", text_color="#7CFC98")
+        else:
+            self.status_label.configure(text=f"Multi-dongle: {len(names)} systems active", text_color="#7CFC98")
+        self._refresh_system_list()
+
     def _start_selected(self) -> None:
         if self.selected_index is None:
             messagebox.showinfo("Select a system", "Choose a system to monitor.")
@@ -239,14 +262,57 @@ class MainWindow(ctk.CTk):
 
         system = self.systems[self.selected_index]
         runtime = self.store.system_runtime_dir(system.name)
-        recordings = Path(self.settings.recordings_dir)
-        if not recordings.is_absolute():
-            recordings = self.store.base_dir / recordings
 
-        command = self.engine.start_system(exe, system, self.settings, runtime, recordings)
-        self.status_label.configure(text=f"Monitoring: {system.name}", text_color="#7CFC98")
-        self._append_log("Started decoder")
+        try:
+            command = self.engine.start_system(
+                exe,
+                system,
+                self.settings,
+                runtime,
+                self._recordings_dir(),
+                stop_others=False,
+            )
+            self.engine.register_system_meta(system.name, system)
+        except ValueError as exc:
+            messagebox.showerror("Cannot start", str(exc))
+            return
+
+        self._append_log(f"[{system.name}] Started decoder")
         self._append_log(" ".join(command))
+        self._update_status()
+
+    def _start_all_multi(self) -> None:
+        rtl_systems = [s for s in self.systems if s.input_source == InputSource.RTL_SDR]
+        if len(rtl_systems) < 2:
+            messagebox.showinfo(
+                "Multi-dongle",
+                "Add at least two RTL-SDR systems with different dongle device indices (0, 1, 2, ...).",
+            )
+            return
+
+        exe = self._get_decoder()
+        if not exe:
+            return
+
+        runtime_root = self.store.runtime_dir / "multi_dongle"
+        try:
+            commands = self.engine.start_all_systems(
+                exe,
+                self.systems,
+                self.settings,
+                runtime_root,
+                self._recordings_dir(),
+            )
+        except ValueError as exc:
+            messagebox.showerror("Cannot start multi-dongle", str(exc))
+            return
+
+        for system, command in zip(rtl_systems, commands):
+            self.engine.register_system_meta(system.name, system)
+            self._append_log(f"[{system.name}] Started on dongle #{system.rtl_device}")
+            self._append_log(" ".join(command))
+
+        self._update_status()
 
     def _start_trunk_scan(self) -> None:
         if len(self.systems) < 2:
@@ -260,19 +326,24 @@ class MainWindow(ctk.CTk):
             return
 
         runtime = self.store.runtime_dir / "trunk_scan"
-        recordings = Path(self.settings.recordings_dir)
-        if not recordings.is_absolute():
-            recordings = self.store.base_dir / recordings
-
-        command = self.engine.start_trunk_scan(exe, self.systems, self.settings, runtime, recordings)
-        self.status_label.configure(text="Trunk scan active", text_color="#7CFC98")
+        command = self.engine.start_trunk_scan(exe, self.systems, self.settings, runtime, self._recordings_dir())
         self._append_log("Started trunk scan")
         self._append_log(" ".join(command))
+        self._update_status()
+
+    def _stop_selected(self) -> None:
+        if self.selected_index is None:
+            messagebox.showinfo("Select a system", "Choose a system to stop.")
+            return
+        name = self.systems[self.selected_index].name
+        self.engine.stop_session(name)
+        self._append_log(f"[{name}] Stop requested")
+        self._update_status()
 
     def _stop(self) -> None:
         self.engine.stop()
-        self.status_label.configure(text="Idle", text_color="#aaaaaa")
-        self._append_log("Stopped decoder")
+        self._append_log("Stopped all decoders")
+        self._update_status()
 
     def _append_log(self, text: str) -> None:
         self.log_box.configure(state="normal")
@@ -287,14 +358,15 @@ class MainWindow(ctk.CTk):
             except queue.Empty:
                 break
             if isinstance(item, CallEvent):
-                parts = [item.text]
+                prefix = f"[{item.session}] " if item.session else ""
+                parts = [f"{prefix}{item.text}"]
                 if item.talkgroup:
                     parts.append(f"TG {item.talkgroup}")
                 self._append_log(" | ".join(parts))
             else:
                 self._append_log(str(item))
-                if str(item).startswith("Decoder stopped"):
-                    self.status_label.configure(text="Idle", text_color="#aaaaaa")
+                if "Decoder stopped" in str(item):
+                    self._update_status()
         self.after(300, self._poll_events)
 
     def _on_close(self) -> None:
